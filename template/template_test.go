@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +15,42 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 )
+
+func TestFuncs(t *testing.T) {
+	t.Run("toJson", func(t *testing.T) {
+		cases := []struct {
+			input    any
+			expected string
+		}{
+			{nil, "null"},
+			{true, "true"},
+			{false, "false"},
+			{0, "0"},
+			{1, "1"},
+			{1.0, "1"},
+			{1.1, "1.1"},
+			{"", `""`},
+			{"hello", `"hello"`},
+			{[]int{1, 2, 3}, "[1,2,3]"},
+			{[]string{"a", "b", "c"}, `["a","b","c"]`},
+			{map[string]int{"a": 1, "b": 2}, `{"a":1,"b":2}`},
+			{map[string]string{"a": "b", "c": "d"}, `{"a":"b","c":"d"}`},
+		}
+
+		for _, tt := range cases {
+			t.Run(tt.expected, func(t *testing.T) {
+				toJson, ok := funcs["toJson"].(func(any) string)
+				if !ok {
+					t.Fatal("toJson is not a function")
+				}
+
+				if s := toJson(tt.input); s != tt.expected {
+					t.Errorf("expected %q, got %q", tt.expected, s)
+				}
+			})
+		}
+	})
+}
 
 func TestNamed(t *testing.T) {
 	f, err := os.Open(filepath.Join("testdata", "templates.jsonl"))
@@ -89,20 +126,26 @@ func TestParse(t *testing.T) {
 }
 
 func TestExecuteWithMessages(t *testing.T) {
+	type template struct {
+		name     string
+		template string
+	}
 	cases := []struct {
-		templates []string
+		name      string
+		templates []template
 		values    Values
 		expected  string
 	}{
 		{
-			[]string{
-				`[INST] {{ if .System }}{{ .System }}{{ print "\n\n" }}{{ end }}{{ .Prompt }}[/INST] `,
-				`[INST] {{ if .System }}{{ .System }}{{ print "\n\n" }}{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`,
-				`{{- range .Messages }}
-{{- if eq .Role "user" }}[INST] {{ if and (isLastMessage $.Messages .) $.System }}{{ $.System }}{{ print "\n\n" }}
+			"mistral",
+			[]template{
+				{"no response", `[INST] {{ if .System }}{{ .System }}{{ "\n\n" }}{{ end }}{{ .Prompt }}[/INST] `},
+				{"response", `[INST] {{ if .System }}{{ .System }}{{ "\n\n" }}{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`},
+				{"messages", `{{- range .Messages }}
+{{- if eq .Role "user" }}[INST] {{ if and ($.Messages.Last "user" .) $.System }}{{ $.System }}{{ "\n\n" }}
 {{- end }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}
 {{- end }}
-{{- end }}`,
+{{- end }}`},
 			},
 			Values{
 				Messages: []api.Message{
@@ -114,15 +157,16 @@ func TestExecuteWithMessages(t *testing.T) {
 			`[INST] Hello friend![/INST] Hello human![INST] Yay![/INST] `,
 		},
 		{
-			[]string{
-				`[INST] {{ if .System }}{{ .System }}{{ print "\n\n" }}{{ end }}{{ .Prompt }}[/INST] `,
-				`[INST] {{ if .System }}{{ .System }}{{ print "\n\n" }}{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`,
-				`
+			"mistral system",
+			[]template{
+				{"no response", `[INST] {{ if .System }}{{ .System }}{{ "\n\n" }}{{ end }}{{ .Prompt }}[/INST] `},
+				{"response", `[INST] {{ if .System }}{{ .System }}{{ "\n\n" }}{{ end }}{{ .Prompt }}[/INST] {{ .Response }}`},
+				{"messages", `
 {{- range .Messages }}
-{{- if eq .Role "user" }}[INST] {{ if and (isLastMessage $.Messages .) $.System }}{{ $.System }}{{ print "\n\n" }}
+{{- if eq .Role "user" }}[INST] {{ if and ($.Messages.Last "user" .) $.System }}{{ $.System }}{{ "\n\n" }}
 {{- end }}{{ .Content }}[/INST] {{ else if eq .Role "assistant" }}{{ .Content }}
 {{- end }}
-{{- end }}`,
+{{- end }}`},
 			},
 			Values{
 				Messages: []api.Message{
@@ -137,22 +181,24 @@ func TestExecuteWithMessages(t *testing.T) {
 Yay![/INST] `,
 		},
 		{
-			[]string{
-				`{{ if .System }}<|im_start|>system
+			"chatml",
+			[]template{
+				// this does not have a "no response" test because it's impossible to render the same output
+				{"response", `{{ if .System }}<|im_start|>system
 {{ .System }}<|im_end|>
 {{ end }}{{ if .Prompt }}<|im_start|>user
 {{ .Prompt }}<|im_end|>
 {{ end }}<|im_start|>assistant
 {{ .Response }}<|im_end|>
-`,
-				`
+`},
+				{"messages", `
 {{- range .Messages }}
-{{- if and (eq .Role "user") (isLastMessage $.Messages .) $.System }}<|im_start|>system
-{{ $.System }}<|im_end|>{{ print "\n" }}
+{{- if and (eq .Role "user") ($.Messages.Last "user" .) $.System }}<|im_start|>system
+{{ $.System }}<|im_end|>{{ "\n" }}
 {{- end }}<|im_start|>{{ .Role }}
-{{ .Content }}<|im_end|>{{ print "\n" }}
+{{ .Content }}<|im_end|>{{ "\n" }}
 {{- end }}<|im_start|>assistant
-`,
+`},
 			},
 			Values{
 				Messages: []api.Message{
@@ -174,18 +220,20 @@ Yay!<|im_end|>
 `,
 		},
 		{
-			[]string{
-				`{{ if .Prompt }}Question: {{ .Prompt }}
+			"moondream",
+			[]template{
+				// this does not have a "no response" test because it's impossible to render the same output
+				{"response", `{{ if .Prompt }}Question: {{ .Prompt }}
 
 {{ end }}Answer: {{ .Response }}
 
-`,
-				`
+`},
+				{"messages", `
 {{- range .Messages }}
-{{- if eq .Role "user" }}Question: {{ .Content }}{{ print "\n\n" }}
-{{- else if eq .Role "assistant" }}Answer: {{ .Content }}{{ print "\n\n" }}
+{{- if eq .Role "user" }}Question: {{ .Content }}{{ "\n\n" }}
+{{- else if eq .Role "assistant" }}Answer: {{ .Content }}{{ "\n\n" }}
 {{- end }}
-{{- end }}Answer: `,
+{{- end }}Answer: `},
 			},
 			Values{
 				Messages: []api.Message{
@@ -211,10 +259,10 @@ Answer: `,
 	}
 
 	for _, tt := range cases {
-		t.Run("", func(t *testing.T) {
-			for _, tmpl := range tt.templates {
-				t.Run("", func(t *testing.T) {
-					tmpl, err := Parse(tmpl)
+		t.Run(tt.name, func(t *testing.T) {
+			for _, ttt := range tt.templates {
+				t.Run(ttt.name, func(t *testing.T) {
+					tmpl, err := Parse(ttt.template)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -228,6 +276,39 @@ Answer: `,
 						t.Errorf("expected\n%s,\ngot\n%s", tt.expected, b.String())
 					}
 				})
+			}
+		})
+	}
+}
+
+func TestMessagesLast(t *testing.T) {
+	s := messages{
+		{Role: "user", Content: "What have I got in my pocket?"},
+		{Role: "assistant", Content: "Not fair! not fair! It isn't fair, my precious, is it, to ask us what it's got in its nassty little pocketses?"},
+		{Role: "user", Content: "What have I got in my pocket?"},
+		{Role: "assistant", Content: "It must give us three guesseses, my precious, three guesseses."},
+		{Role: "user", Content: "Very well! Guess away!"},
+		{Role: "assistant", Content: "Handses!"},
+		{Role: "user", Content: "Guess again!"},
+	}
+
+	cases := []struct {
+		role   string
+		expect bool
+	}{
+		{"user", false},
+		{"assistant", false},
+		{"user", false},
+		{"assistant", false},
+		{"user", false},
+		{"assistant", true},
+		{"user", true},
+	}
+
+	for i, tt := range cases {
+		t.Run(fmt.Sprintf("%s-%d", tt.role, i), func(t *testing.T) {
+			if actual := s.Last(tt.role, s[i]); actual != tt.expect {
+				t.Fatalf("expected %v got %v", tt.expect, actual)
 			}
 		})
 	}
