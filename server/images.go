@@ -36,7 +36,10 @@ import (
 
 type Capability string
 
-const CapabilityCompletion = Capability("completion")
+const (
+	CapabilityCompletion = Capability("completion")
+	CapabilityToolCall   = Capability("toolcall")
+)
 
 type registryOptions struct {
 	Insecure bool
@@ -81,6 +84,10 @@ func (m *Model) Has(caps ...Capability) (missing []Capability) {
 			}
 
 			if _, ok := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]; ok {
+				missing = append(missing, cap)
+			}
+		case CapabilityToolCall:
+			if !slices.Contains(m.Template.Vars(), "tools") {
 				missing = append(missing, cap)
 			}
 		default:

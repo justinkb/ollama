@@ -188,7 +188,7 @@ func TestChatPrompt(t *testing.T) {
 			}
 
 			r.NumCtx = tt.limit
-			prompt, images, err := chatPrompt(context.TODO(), &r, tt.msgs)
+			prompt, images, err := chatPrompt(context.TODO(), &r, tt.msgs, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
