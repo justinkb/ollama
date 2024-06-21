@@ -36,7 +36,10 @@ import (
 
 type Capability string
 
-const CapabilityCompletion = Capability("completion")
+const (
+	CapabilityCompletion = Capability("completion")
+	CapabilitySuffix     = Capability("suffix")
+)
 
 type registryOptions struct {
 	Insecure bool
@@ -81,6 +84,11 @@ func (m *Model) Has(caps ...Capability) (missing []Capability) {
 			}
 
 			if _, ok := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]; ok {
+				missing = append(missing, cap)
+			}
+		case CapabilitySuffix:
+			vars := m.Template.Vars()
+			if !slices.Contains(vars, "suffix") {
 				missing = append(missing, cap)
 			}
 		default:
